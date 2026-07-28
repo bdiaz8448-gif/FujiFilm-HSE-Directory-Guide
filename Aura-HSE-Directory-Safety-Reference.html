@@ -503,7 +503,7 @@
   <p class="sync-hint" id="exportImportHint" style="display:none;" aria-hidden="true" data-en="Make changes here on your computer, tap <b>Export</b>, AirDrop the file to each tablet, then tap <b>Import</b> there to update it." data-es="Haz los cambios aqu&iacute; en tu computadora, toca <b>Export</b>, env&iacute;a el archivo por AirDrop a cada tableta, luego toca <b>Import</b> ahí para actualizarla.">Make changes here on your computer, tap <b>Export</b>, AirDrop the file to each tablet, then tap <b>Import</b> there to update it.</p>
 
   <div class="sync-row">
-    <button id="lockStatusBtn">&#128274; Locked</button>
+    <button id="lockStatusBtn">&#128274; Locked &mdash; tap to unlock editing</button>
     <button id="changePinBtn" style="display:none;" data-en="Edit PIN" data-es="Cambiar PIN">Edit PIN</button>
     <button id="addIncidentBtn" onclick="openAddIncidentForm()" style="display:none;background:#1565c0;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-weight:700;cursor:pointer;font-size:13px;">&#43; Add Incident</button>
 
@@ -1357,7 +1357,7 @@
     var avatarClass = isJacobs(p.company) ? 'avatar jacobs' : 'avatar';
     var cardClass = isJacobs(p.company) ? 'card jacobs-card' : 'card';
     var _vacSrc = p.vacationStart ? p : (p.linkedContactId ? (contacts.find(function(c){return c.id===p.linkedContactId;})||p) : p);
-    var vacBadge = _vacSrc.vacationStart ? '<span class="vac-badge">&#127965; Out</span>' : '';
+    var vacBadge = (_vacSrc.vacationStart && !isVacExpired(_vacSrc)) ? '<span class="vac-badge">&#127965; Out</span>' : '';
     return '<div class="'+cardClass+'" data-id="'+p.id+'">'
       + vacBadge
       + '<div class="'+avatarClass+'">'+escapeHtml(initials(p.name))+'</div>'
@@ -1847,8 +1847,14 @@
      need the admin PIN to mark themselves on vacation or set a backup. The only guard
      is that the person must type their own name exactly as shown to confirm the save.
      This must never be extended to edit any other field. */
+  /* Returns true if the vacation end date has already passed (strict: end < today). */
+  function isVacExpired(p){
+    if(!p.vacationEnd) return false;
+    return p.vacationEnd < new Date().toISOString().slice(0,10);
+  }
   function vacationBannerHtml(p){
     if(!p.vacationStart && !p.vacationEnd && !p.vacationBackup) return '';
+    if(isVacExpired(p)) return '';
     var esLang = uiLang === 'es';
     var label = esLang ? 'De vacaciones / permiso' : 'On vacation / time off';
     var backupLabel = esLang ? 'Respaldo' : 'Backup';
@@ -2472,7 +2478,7 @@
     var btn = document.getElementById('vacationBtn');
     if(!btn) return;
     // If person is currently Out, inject a prominent "I'm Back" button before the vacation btn
-    var isOut = p.vacationStart || p.vacationEnd || p.vacationBackup;
+    var isOut = (p.vacationStart || p.vacationEnd || p.vacationBackup) && !isVacExpired(p);
     if(isOut){
       var esLang = uiLang === 'es';
       var imBackBtn = document.createElement('button');
@@ -3473,7 +3479,7 @@
       + '<div class="notify-msg-box">'+escapeHtml(msg)+'</div>'
       + '<p style="font-size:12px; color:#777; margin:8px 0 0;">The message text has also been copied to your clipboard as a backup, in case your phone doesn&rsquo;t fill it in automatically.<br><span style="color:#999;">El texto tambi&eacute;n se ha copiado como respaldo, en caso de que su tel&eacute;fono no lo complete autom&aacute;ticamente.</span></p>'
       + '<div class="modal-btns">'
-      + '<button class="danger" id="notifyConfirmBtn">Confirm &amp; Send Alert <span style="opacity:.8;">/ Confirmar y Enviar Alerta</span></button>'
+      + '<button class="danger" id="notifyConfirmBtn">Confirm &amp; Open Messages <span style="opacity:.8;">/ Confirmar y Abrir Mensajes</span></button>'
       + '<button id="notifyFinalCancelBtn">Cancel <span style="opacity:.6;">/ Cancelar</span></button>'
       + '</div>';
     document.getElementById('notifyFinalCancelBtn').addEventListener('click', closeModal);
@@ -3486,35 +3492,33 @@
   function sendNotifySms(building){
     var nums = gatherNotifyNumbers(building);
     var msg = emergencyMessageText(building);
-    if(!nums.length){
-      alert('No tagged contacts with phone numbers found for ' + building + '.\nNo hay contactos marcados con n\u00famero de tel\u00e9fono para ' + building + '.');
-      return;
-    }
-    // Activate emergency state immediately
+    if(!nums.length) return;
+    try {
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(msg);
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = msg;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+    } catch(e){ console.error('Clipboard copy failed:', e); }
+    // iPhones cap a web sms: link to one recipient no matter how it's
+    // formatted, so we don't waste the attempt there -- just open to the
+    // first number. Android and most other phones generally do honor a
+    // comma-separated recipient list, so we try the full group there.
+    var recipients = isIosDevice() ? nums[0] : nums.join(',');
+    var href = 'sms:' + recipients + '?&body=' + encodeURIComponent(msg);
+    // ── Activate emergency state before we navigate away to Messages ─────────
+    // Stored in localStorage so state survives the page reload when returning.
     emergencyActive = true;
     localStorage.setItem('aura_emergency_active', 'true');
     try { db.collection('config').doc('emergencyState').set({ active: true, building: building, activatedAt: new Date() }); } catch(e){}
-    updateEmergencyActiveUI();
-    renderEmergencyContent();
-    // Send via Cloudflare Worker → Twilio A2P SMS
-    fetch('https://bitter-moon-3327.bdiaz8448.workers.dev/', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Notify-Key': '413ba4e45ce612d5cd6baf0e27ab986f'
-      },
-      body: JSON.stringify({ numbers: nums, message: msg })
-    })
-    .then(function(r){ return r.json(); })
-    .then(function(data){
-      var sent = data.sent || 0;
-      var total = data.total || nums.length;
-      alert('\u2705 Alert sent to ' + sent + ' of ' + total + ' contacts.\n\u2705 Alerta enviada a ' + sent + ' de ' + total + ' contactos.');
-    })
-    .catch(function(err){
-      console.error('Notify Worker error:', err);
-      alert('\u26a0\ufe0f Could not send alert. Check your internet connection and try again.\n\u26a0\ufe0f No se pudo enviar la alerta. Verifique su conexi\u00f3n e intente nuevamente.');
-    });
+    window.location.href = href;
   }
 
   // ── EMERGENCY STATE MANAGEMENT ─────────────────────────────────────────────
@@ -3877,6 +3881,16 @@
   }).then(function(){
     db.collection('contacts').onSnapshot(function(snapshot){
       contacts = snapshot.docs.map(function(doc){ var d = doc.data(); d.id = doc.id; return d; });
+      // Auto-clear expired vacation entries so Out badges don't linger after the return date
+      contacts.forEach(function(c){
+        if(isVacExpired(c)){
+          db.collection('contacts').doc(c.id).update({
+            vacationStart: firebase.firestore.FieldValue.delete(),
+            vacationEnd: firebase.firestore.FieldValue.delete(),
+            vacationBackup: firebase.firestore.FieldValue.delete()
+          }).catch(function(e){ console.warn('Auto-clear vacation (contacts):', e.message); });
+        }
+      });
       renderContacts(); renderWeekend(); renderCQV(); renderNightShift();
       updateSyncStatus(snapshot.metadata.fromCache);
       if(document.getElementById('sectionEmergency').classList.contains('active')) renderEmergencyContent();
@@ -3919,14 +3933,6 @@
       allIncidents = snapshot.docs.map(function(doc){ var d = doc.data(); d.id = doc.id; return d; });
       if(document.getElementById('sectionIncidents').classList.contains('active')) renderIncidentLog();
     }, function(err){ console.error('incidents sync error:', err); });
-    db.collection('config').doc('emergencyState').onSnapshot(function(doc){
-      var newActive = doc.exists ? doc.data().active === true : false;
-      emergencyActive = newActive;
-      if(emergencyActive){ localStorage.setItem('aura_emergency_active', 'true'); }
-      else { localStorage.removeItem('aura_emergency_active'); }
-      updateEmergencyActiveUI();
-      if(document.getElementById('sectionEmergency').classList.contains('active')) renderEmergencyContent();
-    }, function(err){ console.error('Emergency state sync error:', err); });
   });
   updateLockUI();
   applyLang();
