@@ -1003,6 +1003,10 @@
   firebase.initializeApp(firebaseConfig);
   var db = firebase.firestore();
   try{ db.enablePersistence({synchronizeTabs:true}).catch(function(e){ console.warn('Offline persistence unavailable:', e.message); }); }catch(e){}
+  // Register Service Worker for full offline support
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('./sw.js').catch(function(e){ console.warn('SW reg failed:', e); });
+  }
 
   var contacts = [];
   var editPin = '1234';
@@ -3427,22 +3431,39 @@
     return lines.join('\r\n');
   }
   function saveToContactsBtnHtml(p){
-    var text = vcardText(p);
+    var b64 = btoa(unescape(encodeURIComponent(vcardText(p))));
     var safeName = (p.name||'contact').replace(/[^a-z0-9]+/gi,'_') + '.vcf';
-    var url;
-    try {
-      var blob = new Blob([text], {type:'text/vcard;charset=utf-8'});
-      url = URL.createObjectURL(blob);
-    } catch(e) {
-      url = 'data:text/vcard;charset=utf-8,' + encodeURIComponent(text);
-    }
-    /* iOS Safari: follow link in new tab → native vCard sheet appears (no download attr needed).
-       Android/Desktop: download attribute triggers .vcf save → Contacts app opens it. */
+    return '<button class="primary doc-link-btn" data-vcard="'+b64+'" data-vcname="'+safeName+'" onclick="saveToContactsVcf(this)">Save to Contacts</button>';
+  }
+  function saveToContactsVcf(btn){
+    var text = decodeURIComponent(escape(atob(btn.getAttribute('data-vcard'))));
+    var fname = btn.getAttribute('data-vcname') || 'contact.vcf';
+    var blob = new Blob([text], {type:'text/vcard;charset=utf-8'});
     var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-    var extra = isIOS
-      ? ' target="_blank" rel="noreferrer"'
-      : ' download="'+safeName+'"';
-    return '<a class="primary doc-link-btn" href="'+url+'"'+extra+'>Save to Contacts</a>';
+    if(isIOS){
+      /* iOS 15+: Web Share API lets user pick "Add to Contacts" from the native share sheet.
+         The page stays open — no navigation away. */
+      try {
+        var file = new File([blob], fname, {type:'text/vcard'});
+        if(navigator.canShare && navigator.canShare({files:[file]})){
+          navigator.share({files:[file]}).catch(function(){});
+          return;
+        }
+      } catch(e){}
+      /* Fallback for older iOS: navigate current tab to blob URL.
+         iOS intercepts text/vcard and shows "Add to Contacts" dialog.
+         User taps back arrow to return. Do NOT revoke URL. */
+      window.location.href = URL.createObjectURL(blob);
+      return;
+    }
+    /* Android / Desktop */
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = fname;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){ URL.revokeObjectURL(url); if(a.parentNode) a.parentNode.removeChild(a); }, 2000);
   }
   function openContactForm(existing){
     var p = existing || {id:'id_'+Date.now()+'_'+Math.random().toString(36).slice(2,7), name:'', role:'', company:'', cellPhone:'', officePhone:'', email:'', trailer:'', notifyDSM4:false, notifyDSM3:false};
