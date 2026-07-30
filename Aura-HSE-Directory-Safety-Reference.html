@@ -3433,37 +3433,79 @@
   function saveToContactsBtnHtml(p){
     var b64 = btoa(unescape(encodeURIComponent(vcardText(p))));
     var safeName = (p.name||'contact').replace(/[^a-z0-9]+/gi,'_') + '.vcf';
-    return '<button class="primary doc-link-btn" data-vcard="'+b64+'" data-vcname="'+safeName+'" onclick="saveToContactsVcf(this)">Save to Contacts</button>';
+    /* user-select/touch-callout OFF: without these iOS treats the tap as a
+       text-selection on the label instead of a button press, and the
+       handler never fires. touch-action:manipulation kills the 300ms delay. */
+    var css = 'user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;'
+            + 'touch-action:manipulation;';
+    return '<button type="button" class="primary doc-link-btn" style="'+css+'" '
+         + 'data-vcard="'+b64+'" data-vcname="'+safeName+'" '
+         + 'onclick="saveToContactsVcf(this)">'
+         + '<span style="pointer-events:none">Save to Contacts</span></button>';
   }
+
   function saveToContactsVcf(btn){
-    var text = decodeURIComponent(escape(atob(btn.getAttribute('data-vcard'))));
+    var text  = decodeURIComponent(escape(atob(btn.getAttribute('data-vcard'))));
     var fname = btn.getAttribute('data-vcname') || 'contact.vcf';
+    var label = btn.querySelector('span') || btn;
+    var orig  = label.textContent;
+    function flash(msg, ms){
+      label.textContent = msg;
+      setTimeout(function(){ label.textContent = orig; }, ms || 2200);
+    }
+
     var blob = new Blob([text], {type:'text/vcard;charset=utf-8'});
-    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-    if(isIOS){
-      /* iOS 15+: Web Share API lets user pick "Add to Contacts" from the native share sheet.
-         The page stays open — no navigation away. */
-      try {
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+             || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+    /* ---- Path 1: Web Share API (iOS 15+, Android Chrome) ----------------
+       Must be called synchronously inside the click handler to keep the
+       browser's transient user-activation, or iOS silently rejects it. */
+    try {
+      if(navigator.canShare && typeof File !== 'undefined'){
         var file = new File([blob], fname, {type:'text/vcard'});
-        if(navigator.canShare && navigator.canShare({files:[file]})){
-          navigator.share({files:[file]}).catch(function(){});
+        if(navigator.canShare({files:[file]})){
+          navigator.share({files:[file]})
+            .then(function(){ flash('\u2713 Saved'); })
+            .catch(function(err){
+              /* AbortError = user dismissed the sheet on purpose. Stay quiet. */
+              if(err && err.name === 'AbortError'){ return; }
+              downloadFallback();
+            });
           return;
         }
-      } catch(e){}
-      /* Fallback for older iOS: navigate current tab to blob URL.
-         iOS intercepts text/vcard and shows "Add to Contacts" dialog.
-         User taps back arrow to return. Do NOT revoke URL. */
-      window.location.href = URL.createObjectURL(blob);
+      }
+    } catch(e){ /* fall through */ }
+
+    /* ---- Path 2: iOS without Web Share — navigate to the vCard ---------
+       Safari recognises text/vcard and shows the native Contacts import
+       card. The user taps Back to return. Do NOT revoke the URL first. */
+    if(isIOS){
+      flash('Opening\u2026', 4000);
+      setTimeout(function(){ window.location.href = URL.createObjectURL(blob); }, 60);
       return;
     }
-    /* Android / Desktop */
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url; a.download = fname;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(function(){ URL.revokeObjectURL(url); if(a.parentNode) a.parentNode.removeChild(a); }, 2000);
+
+    downloadFallback();
+
+    /* ---- Path 3: Android / Desktop — plain .vcf download --------------- */
+    function downloadFallback(){
+      try {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url; a.download = fname;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function(){
+          URL.revokeObjectURL(url);
+          if(a.parentNode) a.parentNode.removeChild(a);
+        }, 2000);
+        flash('\u2713 Downloaded');
+      } catch(e){
+        flash('Could not save', 3000);
+      }
+    }
   }
   function openContactForm(existing){
     var p = existing || {id:'id_'+Date.now()+'_'+Math.random().toString(36).slice(2,7), name:'', role:'', company:'', cellPhone:'', officePhone:'', email:'', trailer:'', notifyDSM4:false, notifyDSM3:false};
