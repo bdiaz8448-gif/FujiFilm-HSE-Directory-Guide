@@ -9,7 +9,7 @@
  * Anything not explicitly in SHELL is passed straight through to the
  * network with no interception whatsoever.
  */
-const CACHE = 'aura-hse-v4';
+const CACHE = 'aura-hse-v5';
 
 /* Only these get cached — the page itself and the Firebase library files.
    The Firebase LIBRARIES are static CDN scripts and are safe to cache.
@@ -56,9 +56,20 @@ self.addEventListener('activate', function(e){
         keys.filter(function(k){ return k !== CACHE; })
             .map(function(k){ return caches.delete(k); })
       );
+    }).then(function(){
+      return self.clients.claim();
+    }).then(function(){
+      /* A new worker version just took over. Any page currently open is
+         still showing HTML that the OLD worker served from its cache.
+         Force those pages to reload so the user sees the update straight
+         away instead of having to manually clear website data. */
+      return self.clients.matchAll({type:'window'}).then(function(clients){
+        clients.forEach(function(c){
+          if('navigate' in c) { c.navigate(c.url); }
+        });
+      });
     })
   );
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', function(e){
@@ -79,7 +90,28 @@ self.addEventListener('fetch', function(e){
   // 4. Never touch requests the browser marks as non-cacheable
   if(req.cache === 'no-store' || req.headers.get('range')) return;
 
-  // 5. Everything else: network-first, fall back to cache when truly offline
+  // 5. The main page: ALWAYS go to the network first and bypass the HTTP
+  //    cache entirely. Only fall back to the cached copy if genuinely
+  //    offline. This guarantees a deployed update is never masked by a
+  //    stale cached page.
+  if(req.mode === 'navigate' || url.indexOf('.html') > -1){
+    e.respondWith(
+      fetch(req, {cache:'reload'}).then(function(resp){
+        if(resp && resp.status === 200){
+          var c2 = resp.clone();
+          caches.open(CACHE).then(function(c){ c.put(req, c2).catch(function(){}); });
+        }
+        return resp;
+      }).catch(function(){
+        return caches.match(req).then(function(hit){
+          return hit || caches.match('./Aura-HSE-Directory-Safety-Reference.html');
+        });
+      })
+    );
+    return;
+  }
+
+  // 6. Everything else: network-first, fall back to cache when truly offline
   e.respondWith(
     fetch(req).then(function(resp){
       // Only cache successful, basic/cors responses
