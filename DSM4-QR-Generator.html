@@ -245,8 +245,8 @@
   <div class="ctrl-group" style="flex:1; min-width:300px;">
     <label>App URL (paste your Aura HSE Directory link here)</label>
     <input type="url" id="appUrl" class="url-input"
-      placeholder="https://bdiaz8448-gif.github.io/FujiFilm-HSE-Directory-Guide/Aura-HSE-Directory-Safety-Reference.html"
-      value="https://bdiaz8448-gif.github.io/FujiFilm-HSE-Directory-Guide/Aura-HSE-Directory-Safety-Reference.html">
+      placeholder="https://bdiaz8448-gif.github.io/hse-aura-directory/"
+      value="https://bdiaz8448-gif.github.io/hse-aura-directory/">
   </div>
   <div class="ctrl-group">
     <label>QR Size (px)</label>
@@ -476,9 +476,24 @@ var qrInstances = {};
   });
 })();
 
+var LIVE_APP_URL = 'https://bdiaz8448-gif.github.io/hse-aura-directory/';
+var RETIRED_HOSTS = ['FujiFilm-HSE-Directory-Guide','Aura-HSE-Directory-Safety-Reference'];
+
+/* The retired address only serves a redirect stub, and a meta-refresh DROPS
+   the query string - so a QR pointing there would land on the directory with
+   NO room context and the emergency SMS would not name the room. Never build
+   a QR against it. */
+function normaliseBase(base){
+  base = (base || '').trim();
+  if(!base) return LIVE_APP_URL;
+  for(var i=0;i<RETIRED_HOSTS.length;i++){
+    if(base.indexOf(RETIRED_HOSTS[i]) !== -1) return LIVE_APP_URL;
+  }
+  return base.split('?')[0].split('#')[0];
+}
+
 function buildUrl(r){
-  var base = (document.getElementById('appUrl').value || '').trim();
-  if(!base) base = window.location.href.split('?')[0]; // fallback
+  var base = normaliseBase(document.getElementById('appUrl').value);
   var params = new URLSearchParams({
     building: r.building,
     floor:    r.floor,
@@ -536,7 +551,11 @@ function renderCards(){
 }
 
 async function generateAll(){
-  var appUrl = document.getElementById('appUrl').value.trim();
+  var appUrl = normaliseBase(document.getElementById('appUrl').value);
+  if(appUrl !== document.getElementById('appUrl').value.trim()){
+    document.getElementById('appUrl').value = appUrl;
+    showToast('URL corrected to the live directory address');
+  }
   if(!appUrl){
     showToast('⚠️ Please enter your App URL first', true);
     return;

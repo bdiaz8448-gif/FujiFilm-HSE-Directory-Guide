@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Moved — Fujifilm Aura HSE Directory</title>
 <link rel="canonical" href="https://bdiaz8448-gif.github.io/hse-aura-directory/">
-<meta http-equiv="refresh" content="0; url=https://bdiaz8448-gif.github.io/hse-aura-directory/">
+<meta http-equiv="refresh" content="8; url=https://bdiaz8448-gif.github.io/hse-aura-directory/">
 <style>
  body{margin:0;background:#050607;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
       display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px}
@@ -21,16 +21,23 @@
   <h1>This directory has moved</h1>
   <p>The Fujifilm Aura HSE Directory now lives at one permanent address.
      Update your bookmark and any saved home-screen shortcut.</p>
-  <a href="https://bdiaz8448-gif.github.io/hse-aura-directory/">Open the HSE Directory</a>
+  <a id="goLink" href="https://bdiaz8448-gif.github.io/hse-aura-directory/">Open the HSE Directory</a>
 </div>
 <script>
-/* Remove this repo's old service worker + caches so no stale copy of the
-   directory can keep being served from this retired address. */
-if('serviceWorker' in navigator){
-  navigator.serviceWorker.getRegistrations().then(function(rs){ rs.forEach(function(r){ r.unregister(); }); });
-}
-if(window.caches){ caches.keys().then(function(ks){ ks.forEach(function(k){ caches.delete(k); }); }); }
-setTimeout(function(){ location.replace('https://bdiaz8448-gif.github.io/hse-aura-directory/'); }, 400);
+/* Forward the room QR context. A meta-refresh drops the query string, so any
+   QR already printed with this retired address would arrive with no room
+   information and the emergency SMS would not name the room. This carries
+   ?building/floor/sector/room/roomNo across to the live directory. */
+(function(){
+  var q = window.location.search || '';
+  var dest = 'https://bdiaz8448-gif.github.io/hse-aura-directory/' + q + (window.location.hash||'');
+  var a = document.getElementById('goLink'); if(a) a.href = dest;
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.getRegistrations().then(function(rs){ rs.forEach(function(r){ r.unregister(); }); });
+  }
+  if(window.caches){ caches.keys().then(function(ks){ ks.forEach(function(k){ caches.delete(k); }); }); }
+  location.replace(dest);
+})();
 </script>
 </body>
 </html>
